@@ -8,12 +8,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.mysql.jdbc.Connection;
+import com.mysql.jdbc.DatabaseMetaData;
 
 public class Engine {
 
 	static Connection connection;
 	static Map<String, Long> map = new HashMap<String,Long>();
-	
+	static Map<String, Double> colMap = new HashMap<String,Double>();
+
     private String path;
 
 	
@@ -36,7 +38,115 @@ public class Engine {
 	}
 	
 
+	private void getColumns(String tableName,String database) throws SQLException
+	{
+		
+		System.out.println("Extacting columns in "+tableName);
+		ResultSet ds;
+
+		ds = connection.getMetaData().getColumns(database, null,tableName, null);
+	    while (ds.next()) {
+         	String columnName=ds.getString("COLUMN_NAME");
+         	String columnType=ds.getString("TYPE_NAME");
+            //System.out.println(columnName);
+         	if(this.isSafeType(columnType) && !this.isPK(tableName, columnName) && !this.isFK(tableName, columnName))
+         	{
+         		this.getSummary(tableName, columnName);
+         	}
+            
+	    }
+	}
+
 	
+	private void getSummary(String tableName, String columnName)  throws SQLException
+	{
+		System.out.println("Computing summaries of "+columnName +" in "+tableName);
+		String query="select min("+columnName+") as min,max("+columnName+") as max,round(avg("+columnName+"),2) as avg,round(stddev("+columnName+"),2) as stddev from "+tableName;
+		String y[] = new String[4];
+        Statement statement=connection.createStatement();
+        ResultSet rs = statement.executeQuery(query);
+        rs.next();
+        //System.out.println(rs.getString("n"));
+        y[0]=rs.getString("min");
+        y[1]=rs.getString("max");
+        y[2]=rs.getString("avg");
+        y[3]=rs.getString("stddev");
+
+        //System.out.println(y[0]+"\t"+y[1]+"\t"+y[2]+"\t"+y[3]);
+        double cf=Double.parseDouble(y[3])/Double.parseDouble(y[2]);
+        //double cf2;
+        //double min=0.1;
+        //double max=1;
+        //double min2=10;
+        //double max2=90;
+        
+        //if(cf<=min) cf2=min2;
+        //else if(cf>=max) cf2=max2;
+        //else cf2=(cf-min)/(max-min)*(max2-min2)+min2;
+        
+        //double factor=100/cf2;
+        //System.out.println(tableName+"."+columnName+"\tAVG "+y[2]+"\tSTD "+y[3]+"\tCF "+cf+"\tCF2 "+cf2+"\tFact "+factor);
+        colMap.put(tableName+"."+columnName, cf);
+        
+        
+	}
+	
+	
+	private boolean isSafeType(String type)
+	{
+		type=type.toUpperCase();
+		int i;
+		String[] safe={"INTEGER", "INT", "SMALLINT", "TINYINT", "MEDIUMINT", "BIGINT","DECIMAL", "NUMERIC","FLOAT","DOUBLE"};
+		
+		int n=safe.length;
+		
+		for(i=0;i<n;i++)
+		{
+			if(type.equals(safe[i]))
+					return true;
+		}
+		
+		return false;
+	}
+
+
+	private boolean isPK(String tableName,String columnName) throws SQLException
+	{
+		DatabaseMetaData meta;
+	 	meta = (DatabaseMetaData) connection.getMetaData();
+	 	ResultSet rs=meta.getPrimaryKeys(null, null, tableName);
+	 	while(rs.next())
+	 	{
+	 		String pk= rs.getString(4);
+	 		//System.out.println(pk);
+	 		if(columnName.equals(pk))
+	 		{
+	 			return true;
+	 		}
+	 	}
+
+		return false;
+	}
+
+	
+	private boolean isFK(String tableName,String columnName) throws SQLException
+	{
+		DatabaseMetaData meta;
+	 	meta = (DatabaseMetaData) connection.getMetaData();
+	 	ResultSet rs=meta.getImportedKeys(null, null, tableName);
+	 	while(rs.next())
+	 	{
+	 		String fk= rs.getString(8);
+	 		//System.out.println(fk);
+	 		if(columnName.equals(fk))
+	 		{
+	 			return true;
+	 		}
+	 	}
+
+		return false;
+	}
+
 	
 	public void extractTable(String database)
 	{
@@ -47,16 +157,19 @@ public class Engine {
 
 		try {
 			Statement statement=connection.createStatement();
-	        String query="select TABLE_NAME, TABLE_ROWS from information_schema.TABLES where TABLE_SCHEMA='"+database+"'";
+	        String query="select TABLE_NAME, TABLE_ROWS from information_schema.TABLES where TABLE_SCHEMA='"+database+"' and TABLE_TYPE='BASE TABLE'";
 	        rs = statement.executeQuery(query);
 			
 	        map.clear();
             while (rs.next()) {
             	
             	String tableName=rs.getString("TABLE_NAME");
+            	//System.out.println(tableName);
             	String tableRows=rs.getString("TABLE_ROWS");
             	long tr=Long.parseLong(tableRows);
             	map.put(tableName, tr);
+            	this.getColumns(tableName,database);
+                
             	
             }
 		}catch (SQLException e) {
@@ -74,6 +187,11 @@ public class Engine {
 
 		
 		long tr = map.get(table);
+		double cf=colMap.get(table+"."+column);
+		//System.out.println("cf "+cf);
+		//System.out.println("Coefficient of variation: "+cf);
+		//determinare il numero di iterate g in base al cf
+		//determinare il confidence degree in base al cf e alla percentuale di campionamento
 		double[] risp = new double[10];
 		int g=10; //numero di iterate
 		long n=tr / g;	//righe da estrarre ad ogni iterata
@@ -122,8 +240,12 @@ public class Engine {
 				}
 				end_time = System.currentTimeMillis();
 				difference = (end_time - start_time)/1000;
+				
+				int percent=(i+1)*10;
+				if(cf>1) cf=1; 
+				double cd=Math.max(percent,100-cf*100); //confidence degree
 				//System.out.println("Approximate "+ function+ ": "+answ+ " ["+(i+1)*10+"%] "+difference+ " secs");
-				System.out.println(answ+ " \t["+(i+1)*10+"%] \t"+difference+ " secs");		
+				System.out.println(answ+ " \t["+percent+"%]\t["+cd+"%]\t"+difference+ " secs");		
 				risp[i]=answ;
 					
 			}
