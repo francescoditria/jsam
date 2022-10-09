@@ -30,6 +30,7 @@ public class Engine {
 	        System.out.println("Using "+database);
 
 	        this.extractTable(database);
+	        System.out.println("Model built");
 	        	        
 		} catch (ClassNotFoundException | SQLException e) {
 			e.printStackTrace();			
@@ -61,7 +62,7 @@ public class Engine {
 	private void getSummary(String tableName, String columnName)  throws SQLException
 	{
 		System.out.println("Computing summaries of "+columnName +" in "+tableName);
-		String query="select min("+columnName+") as min,max("+columnName+") as max,round(avg("+columnName+"),2) as avg,round(stddev("+columnName+"),2) as stddev from "+tableName;
+		String query="select min("+columnName+") as min,max("+columnName+") as max,round(avg("+columnName+"),2) as avg,round(stddev("+columnName+"),2) as stddev from "+tableName+" where "+columnName+" is not null";
 		String y[] = new String[4];
         Statement statement=connection.createStatement();
         ResultSet rs = statement.executeQuery(query);
@@ -72,8 +73,18 @@ public class Engine {
         y[2]=rs.getString("avg");
         y[3]=rs.getString("stddev");
 
+        double avg=0;
+        double stddev=0;
+        double cf;
+        if(y[2]!=null)
+        	avg=Double.parseDouble(y[2]);
+        if(y[3]!=null)
+            stddev=Double.parseDouble(y[3]);
         //System.out.println(y[0]+"\t"+y[1]+"\t"+y[2]+"\t"+y[3]);
-        double cf=Double.parseDouble(y[3])/Double.parseDouble(y[2]);
+        if(avg!=0)
+        	cf=stddev/avg;
+        else
+        	cf=0;
         //double cf2;
         //double min=0.1;
         //double max=1;
@@ -178,8 +189,10 @@ public class Engine {
 		
 	}
 	
-	public void exec(String function,String column,String table,String where)
+	public void execPA(String function,String column,String table,String where)
 	{
+		//Progressive Accuracy
+		
 		double start_time = System.currentTimeMillis();
 
 		String cwhere="";
@@ -241,8 +254,8 @@ public class Engine {
 				end_time = System.currentTimeMillis();
 				difference = (end_time - start_time)/1000;
 				
-				int percent=(i+1)*10;
-				if(cf>1) cf=1; 
+				int percent=(i+1)*10;//sample percentage
+				if(cf>1) cf=1; //coefficient of variation
 				double cd=Math.max(percent,100-cf*100); //confidence degree
 				//System.out.println("Approximate "+ function+ ": "+answ+ " ["+(i+1)*10+"%] "+difference+ " secs");
 				System.out.println(answ+ " \t["+percent+"%]\t["+cd+"%]\t"+difference+ " secs");		
@@ -268,6 +281,72 @@ public class Engine {
 	}
 	
 
+	public void execAS(String function,String column,String table,String where)
+	{
+		//Adaptive Sampling
+		
+		double start_time = System.currentTimeMillis();
+
+		String cwhere="";
+		if(!where.isEmpty()) cwhere= " where "+where;
+		
+		long tr = map.get(table);
+		double cf=colMap.get(table+"."+column);
+		if(cf>1) cf=1;
+		
+		double cf2;
+        double min=0.1;
+        double max=0.9;
+        double min2=10;
+        double max2=90;
+        if(cf<=min) cf2=min2;
+        else if(cf>=max) cf2=max2;
+        else cf2=(cf-min)/(max-min)*(max2-min2)+min2;        
+        double factor=100/cf2;      
+        long n=(long) (tr/factor);	//righe da estrarre
+		//System.out.println("N="+n+"/"+tr);
+		
+        String query2="select "+function+"("+column+") from (select * from "+table+cwhere+" LIMIT 0,"+n+") as t";
+		
+		ResultSet rs;
+		Double result;
+		double finale;		
+		double final_time;
+		double difference;
+
+		
+        Statement statement;
+		try {
+			statement = connection.createStatement();
+			rs = statement.executeQuery(query2);
+			rs.next();
+			result=rs.getDouble(1);
+			finale=result;
+			if(function.equals("sum") || function.equals("count")) 
+	        {
+				finale=factor*result;
+			}
+
+			final_time = System.currentTimeMillis();
+			difference = (final_time - start_time)/1000;
+			System.out.println(Math.round(finale)+"\t["+difference+" secs]");
+
+			//double xx=cf2/100;
+			//System.out.println(xx);
+			//double yy=Math.abs(finale-finale/(1-xx));
+			//System.out.println("+-"+yy+" ["+cf*100+"%]");
+			double xx=100-cf2;
+			double perc=finale/100*10;
+			//System.out.println(perc);
+			System.out.println("["+(finale-perc)+", "+(finale+perc)+"] 90%");
+			
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		
+	}
+
+		
 
 }
 
