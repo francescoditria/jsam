@@ -1,0 +1,18 @@
+		//connection
+    String user="root";
+		String pwd="";
+		String host="localhost";
+		String port="3306";
+		String database="foodmart";
+		
+    //query parameters
+		String function="sum";
+		String column="store_sales_sum";
+		String table="agg_pl_01_sales_fact_1997";
+		String where="";			
+
+    //query execution
+		Engine db=new Engine();
+		db.connect(user,pwd,host,port,database);
+		db.execPA(function,column,table,where); //progressive accuracy
+		db.execAS(function,column,table,where); //adaptive sampling
